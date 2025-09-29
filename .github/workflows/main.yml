@@ -1,0 +1,79 @@
+on: [push, pull_request]
+
+defaults:
+    run:
+        shell: bash
+
+jobs:
+    jammy_ccws_static:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                path: src/graphite_to_mcap
+            - run: make bp_install_build BUILD_PROFILE=scan_build
+            - run: make bp_install_build BUILD_PROFILE=static_checks
+            - run: mkdir -p src/.ccws
+            - run: echo "graphite_to_mcap/src/3rdparty/" >> src/.ccws/static_checks.exceptions.paths
+            - run: make BUILD_PROFILE=static_checks
+            - run: make dep_install PKG=graphite_to_mcap
+            - run: make graphite_to_mcap BUILD_PROFILE=scan_build
+
+    jammy_ccws_plain_22:
+        runs-on: ubuntu-22.04
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                path: src/graphite_to_mcap
+            - run: make bp_install_build BUILD_PROFILE=reldebug
+            - run: make dep_install PKG=graphite_to_mcap
+            - run: make graphite_to_mcap
+            - run: make test PKG=graphite_to_mcap
+
+    jammy_ccws_plain_24:
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                path: src/graphite_to_mcap
+            - run: make bp_install_build BUILD_PROFILE=reldebug
+            - run: make dep_install PKG=graphite_to_mcap
+            - run: make graphite_to_mcap
+            - run: make test PKG=graphite_to_mcap
+
+    jammy_ccws_threadsan:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                path: src/graphite_to_mcap
+            - run: make bp_install_build BUILD_PROFILE=thread_sanitizer
+            - run: make dep_install PKG=graphite_to_mcap
+            - run: make graphite_to_mcap BUILD_PROFILE=thread_sanitizer
+            - run: make test PKG=graphite_to_mcap BUILD_PROFILE=thread_sanitizer
+
+    jammy_ccws_asan:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                path: src/graphite_to_mcap
+            - run: make bp_install_build BUILD_PROFILE=addr_undef_sanitizers
+            - run: make dep_install PKG=graphite_to_mcap
+            - run: make graphite_to_mcap BUILD_PROFILE=addr_undef_sanitizers
+            - run: make test PKG=graphite_to_mcap BUILD_PROFILE=addr_undef_sanitizers
