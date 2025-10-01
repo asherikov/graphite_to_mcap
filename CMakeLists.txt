@@ -25,8 +25,7 @@ set(CMAKE_CXX_VISIBILITY_PRESET hidden)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN hidden)
 
 find_package(Boost COMPONENTS headers REQUIRED)
-
-add_subdirectory(src/3rdparty/)
+find_package(pjmsg_mcap_wrapper REQUIRED)
 
 if(CCWS_CLANG_TIDY)
     set(CMAKE_CXX_CLANG_TIDY "${CCWS_CLANG_TIDY}" CACHE STRING "" FORCE)
@@ -37,15 +36,8 @@ add_executable(${PROJECT_NAME}
 )
 
 target_link_libraries(${PROJECT_NAME}
-    "${Boost_LIBRARIES}"
-    fastcdr
-)
-
-target_include_directories(${PROJECT_NAME}
-    SYSTEM
-    PRIVATE src/3rdparty/mcap/cpp/mcap/include/
-    PRIVATE src/3rdparty/mcap/cpp/mcap/include/mcap
-    PRIVATE src/3rdparty/generated/
+    PRIVATE "${Boost_LIBRARIES}"
+    PRIVATE pjmsg_mcap_wrapper::pjmsg_mcap_wrapper
 )
 
 install(TARGETS ${PROJECT_NAME}

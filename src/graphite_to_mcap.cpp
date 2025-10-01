@@ -8,31 +8,14 @@
     @brief
 */
 
+#include <pjmsg_mcap_wrapper/all.h>
+
 #include <regex>
-#include <random>
-#include <filesystem>
+#include <iostream>
 
 #include <boost/asio.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/container/flat_map.hpp>
-
-#include "HeaderCdrAux.ipp"
-#include "StatisticsNamesCdrAux.ipp"
-#include "StatisticsValuesCdrAux.ipp"
-#include "TimeCdrAux.ipp"
-
-#define MCAP_IMPLEMENTATION
-#define MCAP_COMPRESSION_NO_LZ4
-#define MCAP_COMPRESSION_NO_ZSTD
-#define MCAP_PUBLIC __attribute__((visibility("hidden")))
-
-#pragma GCC diagnostic push
-// presumably GCC bug
-#pragma GCC diagnostic ignored "-Warray-bounds"
-#include <mcap/writer.hpp>
-#pragma GCC diagnostic pop
-
-#include "messages.h"
 
 
 namespace
@@ -64,121 +47,6 @@ namespace
     };
 
 
-    class McapCDRWriter
-    {
-    protected:
-        template <class t_Message>
-        class Channel
-        {
-        protected:
-            mcap::Message message_;
-            eprosima::fastcdr::CdrSizeCalculator cdr_size_calculator_;
-
-        protected:
-            uint32_t getSize(const t_Message &message)
-            {
-                size_t current_alignment{ 0 };
-                return (cdr_size_calculator_.calculate_serialized_size(message, current_alignment)
-                        + 4u /*encapsulation*/);
-            }
-
-        public:
-            Channel() : cdr_size_calculator_(eprosima::fastcdr::CdrVersion::XCDRv1)
-            {
-            }
-
-            void initialize(mcap::McapWriter &writer, const std::string_view &msg_topic)
-            {
-                mcap::Schema schema(
-                        intrometry_private::pjmsg_mcap::Message<t_Message>::type,
-                        "ros2msg",
-                        intrometry_private::pjmsg_mcap::Message<t_Message>::schema);
-                writer.addSchema(schema);
-
-                mcap::Channel channel(msg_topic, "ros2msg", schema.id);
-                writer.addChannel(channel);
-
-                message_.channelId = channel.id;
-            }
-
-            void write(mcap::McapWriter &writer, std::vector<std::byte> &buffer, const t_Message &message)
-            {
-                buffer.resize(getSize(message));
-                message_.data = buffer.data();
-
-                {
-                    eprosima::fastcdr::FastBuffer cdr_buffer(
-                            reinterpret_cast<char *>(buffer.data()), buffer.size());  // NOLINT
-                    eprosima::fastcdr::Cdr ser(
-                            cdr_buffer, eprosima::fastcdr::Cdr::DEFAULT_ENDIAN, eprosima::fastcdr::CdrVersion::XCDRv1);
-                    ser.set_encoding_flag(eprosima::fastcdr::EncodingAlgorithmFlag::PLAIN_CDR);
-
-                    ser.serialize_encapsulation();
-                    ser << message;
-                    ser.set_dds_cdr_options({ 0, 0 });
-
-                    message_.dataSize = ser.get_serialized_data_length();
-                }
-
-                message_.logTime = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                           std::chrono::system_clock::now().time_since_epoch())
-                                           .count();
-                message_.publishTime = message_.logTime;
-
-
-                const mcap::Status res = writer.write(message_);
-                if (not res.ok())
-                {
-                    throw std::runtime_error(res.message);
-                }
-            }
-        };
-
-    public:
-        std::tuple<Channel<plotjuggler_msgs::msg::StatisticsNames>, Channel<plotjuggler_msgs::msg::StatisticsValues>>
-                channels_;
-
-        std::vector<std::byte> buffer_;
-        mcap::McapWriter writer_;
-
-    public:
-        ~McapCDRWriter()
-        {
-            writer_.close();
-        }
-
-        void initialize(const std::filesystem::path &filename, const std::string &topic_prefix)
-        {
-            {
-                const mcap::McapWriterOptions options = mcap::McapWriterOptions("ros2msg");
-                const mcap::Status res = writer_.open(filename.native(), options);
-                if (not res.ok())
-                {
-                    throw std::runtime_error(res.message);
-                }
-            }
-
-            std::get<Channel<plotjuggler_msgs::msg::StatisticsNames>>(channels_).initialize(
-                    writer_, topic_prefix + "/names");
-
-            std::get<Channel<plotjuggler_msgs::msg::StatisticsValues>>(channels_).initialize(
-                    writer_, topic_prefix + "/values");
-        }
-
-        template <class t_Message>
-        void write(const t_Message &message)
-        {
-            std::get<Channel<t_Message>>(channels_).write(writer_, buffer_, message);
-        }
-
-        void flush()
-        {
-            writer_.closeLastChunk();
-            writer_.dataSink()->flush();
-        }
-    };
-
-
     class MessageWriter
     {
     public:
@@ -186,98 +54,62 @@ namespace
 
     public:
         DataContainer data_;
-        plotjuggler_msgs::msg::StatisticsNames names_;
-        plotjuggler_msgs::msg::StatisticsValues values_;
-        int32_t prev_timestamp_;
-        uint32_t names_version_;
-        bool version_updated_;
-        McapCDRWriter mcap_writer_;
+        uint64_t current_timestamp_;
+        uint64_t prev_timestamp_;
+        pjmsg_mcap_wrapper::Message message_;
+        pjmsg_mcap_wrapper::Writer mcap_writer_;
 
     public:
         MessageWriter()
         {
+            current_timestamp_ = 0;
             prev_timestamp_ = 0;
-            names_version_ = getRandomUInt32();
-            updateVersion();
-            names_.names().reserve(500);
-            values_.values().reserve(500);
             mcap_writer_.initialize("graphite_to_mcap.mcap", "/graphite_to_mcap");
+            message_.reserve(500);
         }
 
-        void add(const std::string &name, const double value, const int32_t time)
+        void add(const std::string &name, const double value, const uint64_t timestamp)
         {
-            if (names_.header().stamp().sec() != time)
+            if (current_timestamp_ != timestamp)
             {
                 if (not data_.empty())
                 {
-                    if (data_.size() != names_.names().size())
+                    if (data_.size() != message_.size())
                     {
-                        updateVersion();
-                        resize(data_.size());
+                        message_.bumpVersion();
+                        message_.resize(data_.size());
                     }
 
                     std::size_t index = 0;
-                    for (const DataContainer::value_type & entry : data_)
+                    bool version_updated = false;;
+                    for (const DataContainer::value_type &entry : data_)
                     {
-                        if (not version_updated_ and entry.first != names_.names()[index])
+                        if (entry.first != message_.names()[index])
                         {
-                            updateVersion();
+                            message_.bumpVersion();
+                            version_updated = true;
                         }
-                        if (version_updated_)
+                        if (version_updated)
                         {
-                            names_.names()[index] = entry.first;
+                            message_.names()[index] = entry.first;
                         }
-                        values_.values()[index] = entry.second;
+                        message_.values()[index] = entry.second;
 
                         ++index;
                     }
 
-                    if (version_updated_)
-                    {
-                        mcap_writer_.write(names_);
-                        version_updated_ = false;
-                    }
-                    mcap_writer_.write(values_);
+                    mcap_writer_.write(message_);
                     mcap_writer_.flush();
 
                     data_.clear();
                 }
 
-                prev_timestamp_ = names_.header().stamp().sec();
-                names_.header().stamp().sec(time);
-                values_.header().stamp().sec(time);
+                prev_timestamp_ = current_timestamp_;
+                current_timestamp_ = timestamp;
+                message_.setStamp(timestamp);
             }
-
 
             data_[name] = value;
-        }
-
-    protected:
-        static uint32_t getRandomUInt32()
-        {
-            std::mt19937 gen((std::random_device())());
-
-            std::uniform_int_distribution<uint32_t> distrib(
-                    std::numeric_limits<uint32_t>::min(), std::numeric_limits<uint32_t>::max());
-
-            return (distrib(gen));
-        }
-
-        void updateVersion()
-        {
-            if (not version_updated_)
-            {
-                ++names_version_;
-                names_.names_version(names_version_);
-                values_.names_version(names_version_);
-                version_updated_ = true;
-            }
-        }
-
-        void resize(const std::size_t new_size)
-        {
-            names_.names().resize(new_size);
-            values_.values().resize(new_size);
         }
     };
 }  // namespace
@@ -373,8 +205,9 @@ int main(/*int argc, char **argv*/)
                 {
                     throw std::runtime_error("Cannot read metric stamp.");
                 }
-                const int32_t timestamp =
-                        boost::lexical_cast<int32_t>(line.substr(token_start, line.size() - token_start - 1));
+                const uint64_t timestamp =
+                        boost::lexical_cast<uint64_t>(line.substr(token_start, line.size() - token_start - 1))
+                        * std::nano::den;
 
 
                 message_writer.add(name, value, timestamp);
@@ -383,8 +216,9 @@ int main(/*int argc, char **argv*/)
                     double percent_value = 0.0;
                     if (message_writer.prev_timestamp_ > 0 && message_writer.prev_timestamp_ < timestamp)
                     {
-                        // (metric_value / (time_in_seconds * 1000000)) * 100
-                        percent_value = value / ((timestamp - message_writer.prev_timestamp_) * 10000);
+                        // (metric_value / (duration_in_nanoseconds / 1000)) * 100
+                        const uint64_t factor = (timestamp - message_writer.prev_timestamp_) / 100;
+                        percent_value = value / static_cast<double>(factor);
                     }
                     message_writer.add(name + "_percent", percent_value, timestamp);
                 }

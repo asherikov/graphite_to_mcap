@@ -13,11 +13,15 @@ jobs:
                 repository: asherikov/ccws
             - uses: actions/checkout@v4
               with:
+                repository: asherikov/pjmsg_mcap_wrapper
+                path: src/pjmsg_mcap_wrapper
+            - uses: actions/checkout@v4
+              with:
                 path: src/graphite_to_mcap
             - run: make bp_install_build BUILD_PROFILE=scan_build
             - run: make bp_install_build BUILD_PROFILE=static_checks
             - run: mkdir -p src/.ccws
-            - run: echo "graphite_to_mcap/src/3rdparty/" >> src/.ccws/static_checks.exceptions.paths
+            - run: echo "pjmsg_mcap_wrapper/src/3rdparty/" >> src/.ccws/static_checks.exceptions.paths
             - run: make BUILD_PROFILE=static_checks
             - run: make dep_install PKG=graphite_to_mcap
             - run: make graphite_to_mcap BUILD_PROFILE=scan_build
@@ -28,6 +32,10 @@ jobs:
             - uses: actions/checkout@v4
               with:
                 repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/pjmsg_mcap_wrapper
+                path: src/pjmsg_mcap_wrapper
             - uses: actions/checkout@v4
               with:
                 path: src/graphite_to_mcap
@@ -44,6 +52,10 @@ jobs:
                 repository: asherikov/ccws
             - uses: actions/checkout@v4
               with:
+                repository: asherikov/pjmsg_mcap_wrapper
+                path: src/pjmsg_mcap_wrapper
+            - uses: actions/checkout@v4
+              with:
                 path: src/graphite_to_mcap
             - run: make bp_install_build BUILD_PROFILE=reldebug
             - run: make dep_install PKG=graphite_to_mcap
@@ -58,6 +70,10 @@ jobs:
                 repository: asherikov/ccws
             - uses: actions/checkout@v4
               with:
+                repository: asherikov/pjmsg_mcap_wrapper
+                path: src/pjmsg_mcap_wrapper
+            - uses: actions/checkout@v4
+              with:
                 path: src/graphite_to_mcap
             - run: make bp_install_build BUILD_PROFILE=thread_sanitizer
             - run: make dep_install PKG=graphite_to_mcap
@@ -70,6 +86,10 @@ jobs:
             - uses: actions/checkout@v4
               with:
                 repository: asherikov/ccws
+            - uses: actions/checkout@v4
+              with:
+                repository: asherikov/pjmsg_mcap_wrapper
+                path: src/pjmsg_mcap_wrapper
             - uses: actions/checkout@v4
               with:
                 path: src/graphite_to_mcap
